@@ -2,7 +2,7 @@
 
 A real-time fluid dynamics simulation that demonstrates aerodynamic principles using OpenGL.
 
-## Quick Start Guide (Cross-Platform, No Visual Studio Required)
+## Start Guide
 
 ### Prerequisites
 
