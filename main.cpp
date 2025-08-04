@@ -1,118 +1,280 @@
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
+#include <vector>
+#include <cmath>
+#include "FluidSim.h"
 
-const char* vertexShaderSource = "#version 330 core\n" // Vertex Shader
-"layout (location = 0) in vec3 aPos;\n" // Input vertex attribute at location 0
-"void main()\n" // Main function of the vertex shader
-	"{\n"
-	"   gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n" // Set the position of the vertex
-	"}\0";
-const char* fragmentShaderSource = "#version 330 core\n" // Fragment Shader
-"out vec4 FragColor;\n" // Output color of the fragment shader
-	"void main()\n"
-	"{\n"
-	"   FragColor = vec4(1.0, 0.5, 0.2, 1.0);\n" // Set the color of the fragment to orange
-	"}\0";
+const int simSize = 128;
+// Increased time step and reduced viscosity for faster flow
+FluidSim fluid(simSize, 0.00001f, 0.0000001f, 0.2f);
+
+// Shader sources for obstacle
+const char* obstacleVertexShaderSource = R"(#version 330 core
+layout (location = 0) in vec3 aPos;
+void main()
+{
+    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+    FragColor = vec4(0.2, 0.5, 1.0, 1.0);  // Blue
+})";
+
+const char* obstacleFragmentShaderSource = R"(#version 330 core
+out vec4 FragColor;
+void main()
+{
+    FragColor = vec4(1.0, 0.5, 0.2, 1.0);
+})";
+
+// Brighter fluid shader
+const char* pointVertexShaderSource = R"(#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in float aIntensity;
+out float Intensity;
+void main()
+{
+    gl_Position = vec4(aPos, 1.0);
+    gl_PointSize = 12.0;  // Larger points
+    Intensity = aIntensity;
+})";
+
+const char* pointFragmentShaderSource = R"(#version 330 core
+in float Intensity;
+out vec4 FragColor;
+void main()
+{
+    vec3 color = vec3(1.0, 0.0, 0.0);  // Red
+    FragColor = vec4(color * (0.5 + Intensity * 2.0), 1.0);  // Brighter
+})";
 
 int main()
 {
-	glfwInit();
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	// Hints for OpenGL version and profile
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // Package for OpenGL 3.3 Core Profile (package of functions)
+    GLFWwindow* window = glfwCreateWindow(800, 800, "aerodynamics", NULL, NULL);
+    if (!window) {
+        std::cerr << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
+    glfwMakeContextCurrent(window);
 
-	GLfloat vertices[] = { // Vertex data for a triangle
-		/* ISOCOLES TRIANGLE
-		-0.5f, -0.5f * float(sqrt(3.0f)) / 3, 0.0f, // Bottom left vertex
-		 0.5f, -0.5f * float(sqrt(3.0f)) / 3, 0.0f, // Bottom right vertex
-		 0.0f,  0.5f * float(sqrt(3.0f)) * 2 / 3, 0.0f // Top vertex
-		*/
-		// SQUARE (two right triangles)
-            // First triangle
-            -0.5f, -0.5f, 0.0f, // Bottom left
-             0.5f, -0.5f, 0.0f, // Bottom right
-             0.5f,  0.5f, 0.0f, // Top right
-            // Second triangle
-            -0.5f, -0.5f, 0.0f, // Bottom left
-             0.5f,  0.5f, 0.0f, // Top right
-            -0.5f,  0.5f, 0.0f  // Top left
-	};
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        std::cerr << "Failed to initialize GLAD" << std::endl;
+        return -1;
+    }
 
-	GLFWwindow* window = glfwCreateWindow(800, 800, "Aerodynamics Graphics", NULL, NULL);
-	if (window == NULL)
-	{
-		std::cerr << "Failed to create GLFW window" << std::endl;
-		glfwTerminate();
-		return -1;
-	}
-	glfwMakeContextCurrent(window); // Make the window part of the current context
+    glViewport(0, 0, 800, 800);
+    glDisable(GL_DEPTH_TEST);
 
-	gladLoadGL(); // Load OpenGL functions using glad
+    // Set up wind tunnel boundaries
+    for (int i = 0; i < simSize; i++) {
+        fluid.setObstacle(i, 0, true);           // Bottom wall
+        fluid.setObstacle(i, simSize - 1, true);    // Top wall
+    }
 
+    // Set up obstacle - centered in wind tunnel
+    int obsSize = simSize / 8;
+    int obsStartX = simSize / 2;
+    int obsEndX = obsStartX + obsSize;
+    int obsStartY = simSize / 2 - obsSize / 2;
+    int obsEndY = obsStartY + obsSize;
 
-	glViewport(0, 0, 800, 800); // Set the viewport to the size of the window; the viewport goes from (0, 0) to (800, 800)
+    for (int i = obsStartX; i < obsEndX; ++i) {
+        for (int j = obsStartY; j < obsEndY; ++j) {
+            fluid.setObstacle(i, j, true);
+        }
+    }
 
+    // Create obstacle shaders and VAO
+    GLuint obstacleShaderProgram = glCreateProgram();
+    {
+        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &obstacleVertexShaderSource, NULL);
+        glCompileShader(vertexShader);
 
-	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER); // Create a vertex shader object
-	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL); // Attach the vertex shader source code to the shader object
-	glCompileShader(vertexShader); // Compile the vertex shader
+        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentShader, 1, &obstacleFragmentShaderSource, NULL);
+        glCompileShader(fragmentShader);
 
-	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER); // Create a fragment shader object
-	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL); // Attach the fragment shader source code to the shader object
-	glCompileShader(fragmentShader); // Compile the fragment shader
+        glAttachShader(obstacleShaderProgram, vertexShader);
+        glAttachShader(obstacleShaderProgram, fragmentShader);
+        glLinkProgram(obstacleShaderProgram);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
 
-	GLuint shaderProgram = glCreateProgram(); // Create a shader program object
+    // Compute obstacle vertices in NDC
+    float ndc_x0 = (obsStartX / (float)simSize) * 2.0f - 1.0f;
+    float ndc_x1 = (obsEndX / (float)simSize) * 2.0f - 1.0f;
+    float ndc_y0 = (obsStartY / (float)simSize) * 2.0f - 1.0f;
+    float ndc_y1 = (obsEndY / (float)simSize) * 2.0f - 1.0f;
 
-	glAttachShader(shaderProgram, vertexShader); // Attach the vertex shader to the shader program
-	glAttachShader(shaderProgram, fragmentShader); // Attach the fragment shader to the shader program
+    GLfloat obstacleVertices[] = {
+        ndc_x0, ndc_y0, 0.0f,
+        ndc_x1, ndc_y0, 0.0f,
+        ndc_x1, ndc_y1, 0.0f,
+        ndc_x0, ndc_y0, 0.0f,
+        ndc_x1, ndc_y1, 0.0f,
+        ndc_x0, ndc_y1, 0.0f
+    };
 
-	glLinkProgram(shaderProgram); // Link the shader program
+    GLuint obstacleVAO, obstacleVBO;
+    glGenVertexArrays(1, &obstacleVAO);
+    glGenBuffers(1, &obstacleVBO);
 
-	glDeleteShader(vertexShader); // Delete the vertex shader object as it is no longer needed
-	glDeleteShader(fragmentShader); // Delete the fragment shader object as it is no longer needed
+    glBindVertexArray(obstacleVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, obstacleVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(obstacleVertices), obstacleVertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
 
+    // Create point shader program
+    GLuint pointShaderProgram = glCreateProgram();
+    {
+        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &pointVertexShaderSource, NULL);
+        glCompileShader(vertexShader);
 
+        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentShader, 1, &pointFragmentShaderSource, NULL);
+        glCompileShader(fragmentShader);
 
-	GLuint VAO, VBO; // Vertex Buffer Object and Vertex Array Object
+        glAttachShader(pointShaderProgram, vertexShader);
+        glAttachShader(pointShaderProgram, fragmentShader);
+        glLinkProgram(pointShaderProgram);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
 
-	glGenVertexArrays(1, &VAO); // Generate a vertex array object
-	glGenBuffers(1, &VBO); // Generate a buffer object
+    // Create VAO and VBO for fluid points
+    GLuint pointVAO, pointVBO;
+    glGenVertexArrays(1, &pointVAO);
+    glGenBuffers(1, &pointVBO);
 
-	glBindVertexArray(VAO); // Bind the vertex array object
+    glBindVertexArray(pointVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, pointVBO);
+    glBufferData(GL_ARRAY_BUFFER, simSize * simSize * 4 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
 
-	glBindBuffer(GL_ARRAY_BUFFER, VBO); // Bind the buffer object to the GL_ARRAY_BUFFER target
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW); // Upload the vertex data to the buffer
+    // Create point data structure
+    struct FluidPoint {
+        float x, y, z;
+        float intensity;
+    };
+    std::vector<FluidPoint> pointData(simSize * simSize);
 
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); // Define the vertex attribute pointer
-	glEnableVertexAttribArray(0); // Enable the vertex attribute at location 0
+    // Initialize point positions
+    for (int i = 0; i < simSize; i++) {
+        for (int j = 0; j < simSize; j++) {
+            int idx = i * simSize + j;
+            pointData[idx].x = (static_cast<float>(i) / simSize) * 2.0f - 1.0f;
+            pointData[idx].y = (static_cast<float>(j) / simSize) * 2.0f - 1.0f;
+            pointData[idx].z = 0.0f;
+            pointData[idx].intensity = 0.0f;
+        }
+    }
 
-	glBindBuffer(GL_ARRAY_BUFFER, 0); // Unbind the buffer object
-	glBindVertexArray(0); // Unbind the vertex array object
+    // Initialize intensity grid
+    std::vector<float> intensityGrid(simSize * simSize, 0.0f);
 
-	glClearColor(0.2f, 0.3f, 0.3f, 1.0f); // Set the clear color for the window
-	glClear(GL_COLOR_BUFFER_BIT); // Clear the window with the clear color
-	glfwSwapBuffers(window); // Swap the front and back buffers to display the cleared window
+    // Add strong initial fluid
+    int injectionStart = simSize / 3;
+    int injectionEnd = 2 * simSize / 3;
+    for (int j = injectionStart; j < injectionEnd; j++) {
+        fluid.addDensity(2, j, 3000.0f);
+        fluid.addVelocity(2, j, 100.0f, 0.0f);
+        intensityGrid[2 * simSize + j] = 1.0f;
+    }
 
-	while (!glfwWindowShouldClose(window)) // Only closes window when close button is pressed and not by itself
-	{
-		glClearColor(0.07f, 0.13f, 0.f, 1.0f); // Set the clear color for the window
-		glClear(GL_COLOR_BUFFER_BIT);
-		glUseProgram(shaderProgram); // Use the shader program
-		glBindVertexArray(VAO); // Bind the vertex array object
-		glDrawArrays(GL_TRIANGLES, 0, 6); // Draw the triangle using the vertex data
-		glfwSwapBuffers(window); // Swap the front and back buffers to display the rendered triangle
+    // Main loop
+    while (!glfwWindowShouldClose(window))
+    {
+        // Add constant strong fluid input
+        for (int j = injectionStart; j < injectionEnd; j++) {
+            if (!fluid.isObstacle(2, j)) {
+                fluid.addDensity(2, j, 500.0f);
+                fluid.addVelocity(2, j, 30.0f, 0.0f);
+                intensityGrid[2 * simSize + j] = 1.0f;
+            }
+        }
 
-		glfwPollEvents(); // Processes all the polled events so the window will not be in a state of not responding
-	}
+        fluid.step();
 
-	glDeleteVertexArrays(1, &VAO); // Delete the vertex array object
-	glDeleteBuffers(1, &VBO); // Delete the buffer object
-	glDeleteProgram(shaderProgram); // Delete the shader program
+        // Update intensity grid based on density
+        for (int i = 0; i < simSize; i++) {
+            for (int j = 0; j < simSize; j++) {
+                if (fluid.isObstacle(i, j)) {
+                    intensityGrid[i * simSize + j] = 0.0f;
+                    continue;
+                }
 
-	glfwDestroyWindow(window);
-	glfwTerminate();
-	return 0;
+                float d;
+                fluid.getDensity(i, j, d);
+                float targetIntensity = d / 1000.0f; // Fixed scale for consistent brightness
+                if (targetIntensity > 1.0f) targetIntensity = 1.0f;
+
+                // Smooth transition with high persistence
+                intensityGrid[i * simSize + j] =
+                    0.75f * intensityGrid[i * simSize + j] +
+                    0.25f * targetIntensity;
+            }
+        }
+
+        // Update point intensities
+        for (int i = 0; i < simSize; i++) {
+            for (int j = 0; j < simSize; j++) {
+                int idx = i * simSize + j;
+                pointData[idx].intensity = intensityGrid[idx];
+            }
+        }
+
+        // Update VBO
+        glBindBuffer(GL_ARRAY_BUFFER, pointVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, pointData.size() * sizeof(FluidPoint), pointData.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        // Render
+        glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Draw fluid points
+        glUseProgram(pointShaderProgram);
+        glBindVertexArray(pointVAO);
+        glDrawArrays(GL_POINTS, 0, pointData.size());
+        glBindVertexArray(0);
+        glUseProgram(0);
+
+        // Draw obstacle
+        glUseProgram(obstacleShaderProgram);
+        glBindVertexArray(obstacleVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindVertexArray(0);
+        glUseProgram(0);
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    // Cleanup
+    glDeleteVertexArrays(1, &pointVAO);
+    glDeleteBuffers(1, &pointVBO);
+    glDeleteProgram(pointShaderProgram);
+    glDeleteVertexArrays(1, &obstacleVAO);
+    glDeleteBuffers(1, &obstacleVBO);
+    glDeleteProgram(obstacleShaderProgram);
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return 0;
 }
