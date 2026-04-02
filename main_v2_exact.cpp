@@ -1,32 +1,20 @@
-#include <cstdlib>
+///////////////////////
+/******VERSION 2******/
+///////////////////////
+
+
 #include <iostream>
-#include <vector>
-
-#include <GL/glew.h>
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
-
+#include <algorithm>
+#include <vector>
+#include <cmath>
 #include "FluidSim.h"
-
-#ifndef SIM_VERSION
-#define SIM_VERSION 2
-#endif
-
-#if SIM_VERSION != 1 && SIM_VERSION != 2
-#error "SIM_VERSION must be 1 or 2"
-#endif
-
-namespace {
 
 const int simSize = 128;
 FluidSim fluid(simSize, 0.00001f, 0.0000001f, 0.2f);
 
-struct FluidPoint {
-    float x;
-    float y;
-    float z;
-    float intensity;
-};
-
+// FIXED: Removed invalid FragColor from vertex shader
 const char* obstacleVertexShaderSource = R"(#version 330 core
 layout (location = 0) in vec3 aPos;
 void main()
@@ -38,7 +26,7 @@ const char* obstacleFragmentShaderSource = R"(#version 330 core
 out vec4 FragColor;
 void main()
 {
-    FragColor = vec4(1.0, 0.5, 0.2, 1.0);
+    FragColor = vec4(1.0, 0.5, 0.2, 1.0);  // Orange
 })";
 
 const char* pointVertexShaderSource = R"(#version 330 core
@@ -57,92 +45,45 @@ in float Intensity;
 out vec4 FragColor;
 void main()
 {
-    vec3 color = vec3(1.0, 0.0, 0.0);
+    vec3 color = vec3(1.0, 0.0, 0.0);  // Red
     FragColor = vec4(color * (0.5 + Intensity * 2.0), 1.0);
 })";
 
-GLuint createShaderProgram(const char* vertexSrc, const char* fragmentSrc) {
-    GLuint program = glCreateProgram();
-
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexSrc, nullptr);
-    glCompileShader(vertexShader);
-
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentSrc, nullptr);
-    glCompileShader(fragmentShader);
-
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return program;
-}
-
-}  // namespace
-
-int main() {
-    if (!glfwInit()) {
-        const char* errorDesc = nullptr;
-        glfwGetError(&errorDesc);
-        std::cerr << "Failed to initialize GLFW";
-        if (errorDesc) {
-            std::cerr << ": " << errorDesc;
-        }
-        std::cerr << std::endl;
-        return -1;
-    }
-
+int main()
+{
+    glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(800, 800, "aerodynamics", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800, 800, "aerodynamics", NULL, NULL);
     if (!window) {
-        const char* errorDesc = nullptr;
-        glfwGetError(&errorDesc);
-        std::cerr << "Failed to create GLFW window";
-        if (errorDesc) {
-            std::cerr << ": " << errorDesc;
-        }
-        const char* display = std::getenv("DISPLAY");
-        if (!display || display[0] == '\0') {
-            std::cerr << " (DISPLAY is not set; this environment is likely headless)";
-        }
-        std::cerr << std::endl;
+        std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return -1;
     }
-
     glfwMakeContextCurrent(window);
 
-    glewExperimental = GL_TRUE;
-    if (glewInit() != GLEW_OK) {
-        std::cerr << "Failed to initialize GLEW" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        std::cerr << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
-    glGetError();
-
-    std::cout << "Running SIM_VERSION=" << SIM_VERSION << std::endl;
 
     glViewport(0, 0, 800, 800);
     glDisable(GL_DEPTH_TEST);
 
+    // Set up wind tunnel boundaries
     for (int i = 0; i < simSize; i++) {
         fluid.setObstacle(i, 0, true);
         fluid.setObstacle(i, simSize - 1, true);
     }
 
-    const int obsSize = simSize / 8;
-    const int obsStartX = simSize / 2;
-    const int obsEndX = obsStartX + obsSize;
-    const int obsStartY = simSize / 2 - obsSize / 2;
-    const int obsEndY = obsStartY + obsSize;
+    // Set up obstacle
+    int obsSize = simSize / 8;
+    int obsStartX = simSize / 2;
+    int obsEndX = obsStartX + obsSize;
+    int obsStartY = simSize / 2 - obsSize / 2;
+    int obsEndY = obsStartY + obsSize;
 
     for (int i = obsStartX; i < obsEndX; ++i) {
         for (int j = obsStartY; j < obsEndY; ++j) {
@@ -150,25 +91,62 @@ int main() {
         }
     }
 
-    const float ndc_x0 = (obsStartX / static_cast<float>(simSize)) * 2.0f - 1.0f;
-    const float ndc_x1 = (obsEndX / static_cast<float>(simSize)) * 2.0f - 1.0f;
-    const float ndc_y0 = (obsStartY / static_cast<float>(simSize)) * 2.0f - 1.0f;
-    const float ndc_y1 = (obsEndY / static_cast<float>(simSize)) * 2.0f - 1.0f;
+    // Create obstacle shaders and VAO
+    GLuint obstacleShaderProgram = glCreateProgram();
+    {
+        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &obstacleVertexShaderSource, NULL);
+        glCompileShader(vertexShader);
 
-    const GLfloat obstacleVertices[] = {
+        // Add error checking
+        GLint success;
+        char infoLog[512];
+        glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+            std::cerr << "VERTEX SHADER COMPILATION ERROR: " << infoLog << std::endl;
+        }
+
+        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentShader, 1, &obstacleFragmentShaderSource, NULL);
+        glCompileShader(fragmentShader);
+
+        glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+            std::cerr << "FRAGMENT SHADER COMPILATION ERROR: " << infoLog << std::endl;
+        }
+
+        glAttachShader(obstacleShaderProgram, vertexShader);
+        glAttachShader(obstacleShaderProgram, fragmentShader);
+        glLinkProgram(obstacleShaderProgram);
+
+        glGetProgramiv(obstacleShaderProgram, GL_LINK_STATUS, &success);
+        if (!success) {
+            glGetProgramInfoLog(obstacleShaderProgram, 512, NULL, infoLog);
+            std::cerr << "SHADER PROGRAM LINKING ERROR: " << infoLog << std::endl;
+        }
+
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
+
+    // Compute obstacle vertices
+    float ndc_x0 = (obsStartX / (float)simSize) * 2.0f - 1.0f;
+    float ndc_x1 = (obsEndX / (float)simSize) * 2.0f - 1.0f;
+    float ndc_y0 = (obsStartY / (float)simSize) * 2.0f - 1.0f;
+    float ndc_y1 = (obsEndY / (float)simSize) * 2.0f - 1.0f;
+
+    GLfloat obstacleVertices[] = {
         ndc_x0, ndc_y0, 0.0f,
         ndc_x1, ndc_y0, 0.0f,
         ndc_x1, ndc_y1, 0.0f,
         ndc_x0, ndc_y0, 0.0f,
         ndc_x1, ndc_y1, 0.0f,
-        ndc_x0, ndc_y1, 0.0f,
+        ndc_x0, ndc_y1, 0.0f
     };
 
-    const GLuint obstacleShaderProgram = createShaderProgram(obstacleVertexShaderSource, obstacleFragmentShaderSource);
-    const GLuint pointShaderProgram = createShaderProgram(pointVertexShaderSource, pointFragmentShaderSource);
-
-    GLuint obstacleVAO = 0;
-    GLuint obstacleVBO = 0;
+    GLuint obstacleVAO, obstacleVBO;
     glGenVertexArrays(1, &obstacleVAO);
     glGenBuffers(1, &obstacleVBO);
 
@@ -180,18 +158,33 @@ int main() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    GLuint pointVAO = 0;
-    GLuint pointVBO = 0;
+    // Create point shader program
+    GLuint pointShaderProgram = glCreateProgram();
+    {
+        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &pointVertexShaderSource, NULL);
+        glCompileShader(vertexShader);
+
+        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentShader, 1, &pointFragmentShaderSource, NULL);
+        glCompileShader(fragmentShader);
+
+        glAttachShader(pointShaderProgram, vertexShader);
+        glAttachShader(pointShaderProgram, fragmentShader);
+        glLinkProgram(pointShaderProgram);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
+
+    // Create VAO and VBO for fluid points
+    GLuint pointVAO, pointVBO;
     glGenVertexArrays(1, &pointVAO);
     glGenBuffers(1, &pointVBO);
 
     glBindVertexArray(pointVAO);
     glBindBuffer(GL_ARRAY_BUFFER, pointVBO);
-#if SIM_VERSION == 1
-    glBufferData(GL_ARRAY_BUFFER, simSize * simSize * sizeof(FluidPoint), nullptr, GL_DYNAMIC_DRAW);
-#else
+    // Start with empty buffer
     glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-#endif
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float)));
@@ -199,32 +192,22 @@ int main() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
+    // Initialize intensity grid
     std::vector<float> intensityGrid(simSize * simSize, 0.0f);
-    std::vector<FluidPoint> pointData;
-#if SIM_VERSION == 1
-    pointData.resize(simSize * simSize);
-    for (int i = 0; i < simSize; ++i) {
-        for (int j = 0; j < simSize; ++j) {
-            const int idx = i * simSize + j;
-            pointData[idx].x = (static_cast<float>(i) / simSize) * 2.0f - 1.0f;
-            pointData[idx].y = (static_cast<float>(j) / simSize) * 2.0f - 1.0f;
-            pointData[idx].z = 0.0f;
-            pointData[idx].intensity = 0.0f;
-        }
-    }
-#else
-    pointData.reserve(simSize * simSize);
-#endif
 
-    const int injectionStart = simSize / 3;
-    const int injectionEnd = 2 * simSize / 3;
+    // Add strong initial fluid
+    int injectionStart = simSize / 3;
+    int injectionEnd = 2 * simSize / 3;
     for (int j = injectionStart; j < injectionEnd; j++) {
         fluid.addDensity(2, j, 3000.0f);
         fluid.addVelocity(2, j, 100.0f, 0.0f);
         intensityGrid[2 * simSize + j] = 1.0f;
     }
 
-    while (!glfwWindowShouldClose(window)) {
+    // Main loop
+    while (!glfwWindowShouldClose(window))
+    {
+        // Add constant strong fluid input
         for (int j = injectionStart; j < injectionEnd; j++) {
             if (!fluid.isObstacle(2, j)) {
                 fluid.addDensity(2, j, 500.0f);
@@ -235,6 +218,7 @@ int main() {
 
         fluid.step();
 
+        // Update intensity grid
         for (int i = 0; i < simSize; i++) {
             for (int j = 0; j < simSize; j++) {
                 if (fluid.isObstacle(i, j)) {
@@ -242,60 +226,56 @@ int main() {
                     continue;
                 }
 
-                float d = 0.0f;
+                float d;
                 fluid.getDensity(i, j, d);
                 float targetIntensity = d / 1000.0f;
-                if (targetIntensity > 1.0f) {
-                    targetIntensity = 1.0f;
-                }
+                if (targetIntensity > 1.0f) targetIntensity = 1.0f;
 
+                // Smooth intensity
                 intensityGrid[i * simSize + j] =
                     0.75f * intensityGrid[i * simSize + j] +
                     0.25f * targetIntensity;
             }
         }
 
-#if SIM_VERSION == 1
-        for (int i = 0; i < simSize; i++) {
-            for (int j = 0; j < simSize; j++) {
-                const int idx = i * simSize + j;
-                pointData[idx].intensity = intensityGrid[idx];
-            }
-        }
+        // Create dynamic point data - only for visible fluid
+        struct FluidPoint {
+            float x, y, z;
+            float intensity;
+        };
+        std::vector<FluidPoint> pointData;
 
-        glBindBuffer(GL_ARRAY_BUFFER, pointVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, pointData.size() * sizeof(FluidPoint), pointData.data());
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-#else
-        pointData.clear();
+        // Only add points with significant intensity
         for (int i = 0; i < simSize; i++) {
             for (int j = 0; j < simSize; j++) {
-                const float intensity = intensityGrid[i * simSize + j];
-                if (intensity > 0.05f) {
+                if (intensityGrid[i * simSize + j] > 0.05f) {  // Threshold
                     FluidPoint p;
                     p.x = (static_cast<float>(i) / simSize) * 2.0f - 1.0f;
                     p.y = (static_cast<float>(j) / simSize) * 2.0f - 1.0f;
                     p.z = 0.0f;
-                    p.intensity = intensity;
+                    p.intensity = intensityGrid[i * simSize + j];
                     pointData.push_back(p);
                 }
             }
         }
 
+        // Update VBO with only visible points
         glBindBuffer(GL_ARRAY_BUFFER, pointVBO);
         glBufferData(GL_ARRAY_BUFFER, pointData.size() * sizeof(FluidPoint), pointData.data(), GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-#endif
 
-        glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
+        // Render
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // Black background
         glClear(GL_COLOR_BUFFER_BIT);
 
+        // Draw fluid points
         glUseProgram(pointShaderProgram);
         glBindVertexArray(pointVAO);
-        glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(pointData.size()));
+        glDrawArrays(GL_POINTS, 0, pointData.size());
         glBindVertexArray(0);
         glUseProgram(0);
 
+        // Draw obstacle
         glUseProgram(obstacleShaderProgram);
         glBindVertexArray(obstacleVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -306,6 +286,7 @@ int main() {
         glfwPollEvents();
     }
 
+    // Cleanup
     glDeleteVertexArrays(1, &pointVAO);
     glDeleteBuffers(1, &pointVBO);
     glDeleteProgram(pointShaderProgram);

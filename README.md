@@ -8,9 +8,9 @@ A real-time fluid dynamics simulation that demonstrates aerodynamic principles u
 
 - C++14 compatible compiler (GCC, Clang, MSVC, or MinGW)
 - [CMake](https://cmake.org/) 3.15 or newer
-- [GLFW](https://www.glfw.org/) and [GLAD](https://glad.dav1d.de/) (see below for setup)
+- [GLFW](https://www.glfw.org/) and [GLEW](https://glew.sourceforge.net/)
 
-### Building the Project
+### Build and Run
 
 1. **Clone this repository:**
    ```sh
@@ -24,34 +24,65 @@ A real-time fluid dynamics simulation that demonstrates aerodynamic principles u
      git clone https://github.com/Microsoft/vcpkg.git
      cd vcpkg
      ./bootstrap-vcpkg.sh # or .\bootstrap-vcpkg.bat on Windows
-     ./vcpkg install glfw3
+       ./vcpkg install glfw3 glew
      export VCPKG_ROOT=$(pwd) # or set VCPKG_ROOT=%cd% on Windows
      cd ..
      ```
-   - **Or install GLFW and OpenGL using your system package manager.**
+   - **Or install GLFW/OpenGL/GLEW from your system package manager (Ubuntu/Debian):**
+       ```sh
+       sudo apt-get update
+       sudo apt-get install -y libglfw3-dev libglew-dev libopengl-dev libgl1-mesa-dev mesa-common-dev
+       ```
 
-3. **Make sure the `glad` loader files are present:**
-   - Place `glad.c` in your project root or `glad/` directory.
-   - Place `glad.h` in `glad/include/glad/`.
+3. **Choose one run mode:**
 
-4. **Build with CMake:**
+    - **Unified mode (`main.cpp`)**
+       Uses the refactored entry point and lets you pick simulation behavior via `SIM_VERSION=1|2`.
+
+       ```sh
+       cmake -S . -B build -DMAIN_VARIANT=unified -DSIM_VERSION=2
+       cmake --build build -j
+       ./build/aerodynamics
+       ```
+
+    - **Exact Version 1 (`main_v1_exact.cpp`)**
+    - **Exact Version 2 (`main_v2_exact.cpp`)**
+
+       These two are the preserved source variants. They use GLAD + `glad.c`.
+       If you use exact variants, ensure headers exist:
+
+       ```sh
+       mkdir -p include/glad include/KHR
+       curl -fsSL https://raw.githubusercontent.com/Dav1dde/glad/v0.1.36/include/glad/glad.h -o include/glad/glad.h
+       curl -fsSL https://raw.githubusercontent.com/KhronosGroup/Khronos-Headers/main/include/KHR/khrplatform.h -o include/KHR/khrplatform.h
+       ```
+
+       Version 1:
+       ```sh
+       cmake -S . -B build-v1 -DMAIN_VARIANT=v1_exact
+       cmake --build build-v1 -j
+       ./build-v1/aerodynamics
+       ```
+
+       Version 2:
+       ```sh
+       cmake -S . -B build-v2 -DMAIN_VARIANT=v2_exact
+       cmake --build build-v2 -j
+       ./build-v2/aerodynamics
+       ```
+
+4. **Headless/container run (if no desktop display):**
    ```sh
-   mkdir build
-   cd build
-   cmake ..
-   cmake --build .
-   ```
-
-5. **Run the simulation:**
-   ```sh
-   ./aerodynamics   # or aerodynamics.exe on Windows
+    DISPLAY=:1 LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 ./build/aerodynamics
    ```
 
 ## Project Structure
 
-- `main.cpp` - Main application code
+- `main.cpp` - Unified entry point (select behavior with `SIM_VERSION=1|2`)
+- `main_v1_exact.cpp` - Preserved exact Version 1 source path
+- `main_v2_exact.cpp` - Preserved exact Version 2 source path
 - `FluidSim.h/cpp` - Fluid simulation implementation
-- `glad/` - OpenGL loader (C and header files)
+- Unified mode uses GLEW; exact modes use GLAD (`glad.c` + headers)
 
 ## Controls
 
@@ -77,9 +108,10 @@ You can modify these parameters in `main.cpp`:
 - If you get `GLFW/glfw3.h not found`:
   - Make sure you've installed GLFW (via vcpkg or your system package manager)
   - Ensure CMake can find the GLFW package
-- If you get `glad.h not found`:
-  - Ensure the glad folder is in your project directory as described above
-  - Check that the include paths are set correctly in CMakeLists.txt
+- If you get `GL/glew.h not found`:
+   - Install `libglew-dev` (Linux) or `glew` via vcpkg
+- If you build exact variants and get `glad/glad.h not found`:
+   - Add `include/glad/glad.h` and `include/KHR/khrplatform.h` as shown above
 - For any other issues:
   - Make sure your compiler supports C++14
   - Ensure all dependencies are installed and discoverable by CMake
