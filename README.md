@@ -2,6 +2,39 @@
 
 A real-time fluid dynamics simulation that demonstrates aerodynamic principles using OpenGL.
 
+## Project Overview
+
+### What Was Implemented
+
+This project implements a **real-time 2D fluid dynamics (aerodynamics) simulation** rendered with OpenGL. The core simulation is based on Jos Stam's "Stable Fluids" algorithm, which solves the incompressible Navier-Stokes equations on a discrete grid. Key components include:
+
+- **FluidSim (C++ class):** A grid-based fluid solver (`FluidSim.h` / `FluidSim.cpp`) that operates on a 128×128 cell grid and supports:
+  - **Diffusion** — spreads velocity and density using a Gauss-Seidel iterative solver.
+  - **Advection** — moves density and velocity along the current velocity field using semi-Lagrangian back-tracing.
+  - **Projection** — enforces incompressibility (divergence-free velocity) via a pressure-correction step, also solved with Gauss-Seidel iteration.
+  - **Obstacle support** — individual grid cells can be marked as solid, enabling wind-tunnel walls and internal obstacles.
+
+- **Wind tunnel setup (`main.cpp`):**
+  - Top and bottom walls are set as solid boundary cells, forming a closed channel.
+  - A rectangular obstacle is placed in the center of the tunnel to represent an object in the flow.
+  - Fluid (density + rightward velocity) is continuously injected from the left side of the grid, simulating an oncoming airstream.
+
+- **OpenGL rendering:**
+  - Fluid density is visualized as a grid of red points whose brightness scales with local density, giving a clear picture of the flow field.
+  - The solid obstacle is drawn as an orange-filled rectangle using a separate shader program.
+  - The simulation runs in real time inside a standard GLFW render loop, updating the GPU vertex buffer every frame.
+
+### Results
+
+Running the simulation produces the following observable aerodynamic effects:
+
+- **Laminar upstream flow** — fluid enters from the left and travels smoothly toward the obstacle.
+- **Flow deflection and separation** — as the fluid encounters the rectangular obstacle, it is forced to go around it, clearly showing flow splitting above and below the body.
+- **Wake formation** — a low-density shadow region (wake) forms immediately downstream of the obstacle, reflecting the reduced flow behind a bluff body.
+- **Wall effects** — the top and bottom solid walls accelerate the flow in the narrow passages between the obstacle and the walls, consistent with the Venturi effect.
+
+The combination of the diffusion, advection, and projection steps keeps the simulation numerically stable at the chosen parameters (time step 0.00001, viscosity 0.0000001, diffusion rate 0.2), allowing the flow pattern to evolve smoothly without blowing up over time.
+
 ## Start Guide
 
 ### Prerequisites
